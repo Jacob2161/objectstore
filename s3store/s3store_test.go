@@ -107,13 +107,13 @@ func TestS3Compatible(t *testing.T) {
 	}
 	deleted, err := store.DeleteMany(
 		ctx,
-		[]string{"objects/a/1", "objects/a/2", "sqlite/missing"},
+		[]string{"objects/a/1", "objects/a/2", "objects/missing"},
 	)
 	if err != nil || len(deleted) != 3 {
 		t.Fatalf("batch delete: %v %v", deleted, err)
 	}
 	keys = nil
-	for object, err := range store.List(ctx, "sqlite/", "") {
+	for object, err := range store.List(ctx, "objects/", "") {
 		if err != nil {
 			t.Fatal(err)
 		}
