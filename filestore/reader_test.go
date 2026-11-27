@@ -31,7 +31,7 @@ func TestReaderCreatesNothing(t *testing.T) {
 	content := []byte("object")
 	if err := store.Put(
 		ctx,
-		"sqlite/a",
+		"objects/a",
 		bytes.NewReader(content),
 		int64(len(content)),
 	); err != nil {
@@ -47,7 +47,7 @@ func TestReaderCreatesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, err := reader.Get(ctx, "sqlite/a")
+	body, err := reader.Get(ctx, "objects/a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,17 +55,17 @@ func TestReaderCreatesNothing(t *testing.T) {
 	if err := errors.Join(err, body.Close()); err != nil || !bytes.Equal(read, content) {
 		t.Fatalf("read %q: %v", read, err)
 	}
-	if _, err := reader.Get(ctx, "sqlite/b"); !errors.Is(err, objectstore.ErrNotFound) {
+	if _, err := reader.Get(ctx, "objects/b"); !errors.Is(err, objectstore.ErrNotFound) {
 		t.Fatalf("a missing object read as %v", err)
 	}
 	var keys []string
-	for listed, err := range reader.List(ctx, "sqlite/", "") {
+	for listed, err := range reader.List(ctx, "objects/", "") {
 		if err != nil {
 			t.Fatal(err)
 		}
 		keys = append(keys, listed.Key)
 	}
-	if len(keys) != 1 || keys[0] != "sqlite/a" {
+	if len(keys) != 1 || keys[0] != "objects/a" {
 		t.Fatalf("listed %v", keys)
 	}
 }

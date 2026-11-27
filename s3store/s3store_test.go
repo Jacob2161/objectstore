@@ -79,27 +79,27 @@ func TestS3Compatible(t *testing.T) {
 	// s3mock checks each condition but lets concurrent creates of one key
 	// both win, so the concurrent check runs on filestore only.
 	objectstoretest.CheckConditionalWrites(t, store)
-	for _, key := range []string{"sqlite/a/1.base", "sqlite/a/2.delta", "sqlite/b/1.base"} {
+	for _, key := range []string{"objects/a/1", "objects/a/2", "objects/b/1"} {
 		if err := store.Put(ctx, key, strings.NewReader(key), int64(len(key))); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var keys []string
-	for object, err := range store.List(ctx, "sqlite/a/", "sqlite/a/1.base") {
+	for object, err := range store.List(ctx, "objects/a/", "objects/a/1") {
 		if err != nil {
 			t.Fatal(err)
 		}
 		keys = append(keys, object.Key)
 	}
-	if len(keys) != 1 || keys[0] != "sqlite/a/2.delta" {
+	if len(keys) != 1 || keys[0] != "objects/a/2" {
 		t.Fatalf("listed %v", keys)
 	}
-	reader, err := store.Get(ctx, "sqlite/b/1.base")
+	reader, err := store.Get(ctx, "objects/b/1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	content, err := io.ReadAll(reader)
-	if err != nil || string(content) != "sqlite/b/1.base" || reader.Close() != nil {
+	if err != nil || string(content) != "objects/b/1" || reader.Close() != nil {
 		t.Fatal("get round trip")
 	}
 	if _, err := store.Get(ctx, "missing"); err != objectstore.ErrNotFound {
@@ -107,7 +107,7 @@ func TestS3Compatible(t *testing.T) {
 	}
 	deleted, err := store.DeleteMany(
 		ctx,
-		[]string{"sqlite/a/1.base", "sqlite/a/2.delta", "sqlite/missing"},
+		[]string{"objects/a/1", "objects/a/2", "sqlite/missing"},
 	)
 	if err != nil || len(deleted) != 3 {
 		t.Fatalf("batch delete: %v %v", deleted, err)
@@ -119,7 +119,7 @@ func TestS3Compatible(t *testing.T) {
 		}
 		keys = append(keys, object.Key)
 	}
-	if len(keys) != 1 || keys[0] != "sqlite/b/1.base" {
+	if len(keys) != 1 || keys[0] != "objects/b/1" {
 		t.Fatalf("listed %v after the batch delete", keys)
 	}
 	versioning, err := store.Versioning(ctx)
