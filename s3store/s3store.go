@@ -23,8 +23,12 @@ import (
 type Provider string
 
 const (
+	// ProviderAWS is Amazon S3.
 	ProviderAWS Provider = "aws"
-	ProviderR2  Provider = "r2"
+	// ProviderR2 is Cloudflare R2.
+	ProviderR2 Provider = "r2"
+	// ProviderGCS is Google Cloud Storage's S3-compatible XML API, with HMAC
+	// keys.
 	ProviderGCS Provider = "gcs"
 	// ProviderS3 is any other S3-compatible service, such as MinIO.
 	ProviderS3 Provider = "s3"
@@ -35,14 +39,33 @@ const gcsEndpoint = "https://storage.googleapis.com"
 
 // NewStoreArgs configures NewStore.
 type NewStoreArgs struct {
-	Provider        Provider
-	Endpoint        string
-	Region          string
-	Bucket          string
-	Prefix          string
-	AccessKeyID     string
+	// Provider selects endpoint and checksum defaults. Required.
+	Provider Provider
+	// Endpoint is the service URL. R2 and ProviderS3 require it; GCS
+	// defaults to storage.googleapis.com, and AWS to its regional endpoint.
+	Endpoint string
+	// Region is the bucket's region. AWS requires it; R2 uses "auto", GCS
+	// defaults to "auto", and ProviderS3 to us-east-1.
+	Region string
+	// Bucket is the bucket's name. Required.
+	Bucket string
+	// Prefix scopes every key to a directory of the bucket, without leading
+	// or trailing slashes; "" uses the whole bucket.
+	Prefix string
+	// AccessKeyID is the credential's ID (an HMAC key ID on GCS).
+	AccessKeyID string
+	// SecretAccessKey is the credential's secret. It signs every request
+	// and is never sent.
 	SecretAccessKey string
-	PathStyle       bool
+	// PathStyle puts the bucket in the URL path instead of the host name,
+	// as MinIO and most self-hosted servers need.
+	PathStyle bool
+	// PrivateAddressesAllowed lets the store connect to private, loopback,
+	// and unspecified addresses, for a bucket on a LAN or on this host.
+	// Without it such an endpoint fails with ErrPrivateEndpoint, so an
+	// endpoint a user typed cannot reach services inside the network.
+	// Link-local and cloud metadata addresses are refused either way.
+	PrivateAddressesAllowed bool
 }
 
 // Store is a bucket reached through the S3 API.
@@ -58,7 +81,7 @@ const maximumBatchDelete = 1000
 
 // NewStore builds a client for the bucket.
 func NewStore(args *NewStoreArgs) (*Store, error) {
-	if args.Bucket == "" {
+	if args == nil || args.Bucket == "" {
 		return nil, errors.New("bucket is required")
 	}
 	region := args.Region
@@ -101,7 +124,9 @@ func NewStore(args *NewStoreArgs) (*Store, error) {
 		// R2 and GCS reject the newer default checksum headers on some operations.
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
-		HTTPClient:                 newHTTPClient(),
+		HTTPClient: newHTTPClient(
+			addressPolicy{privateAllowed: args.PrivateAddressesAllowed},
+		),
 	}
 	if endpoint != "" {
 		clientSettings.BaseEndpoint = aws.String(endpoint)

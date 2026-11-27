@@ -47,6 +47,11 @@ if errors.Is(err, objectstore.ErrPrecondition) {
   check before anything is written.
 - `List` is an `iter.Seq2`, in key order, resumable with `startAfter`.
 - `Versioning` warns about buckets that keep billable noncurrent versions.
+- s3store never connects to link-local or cloud metadata addresses, and
+  connects to private and loopback ones only with `PrivateAddressesAllowed`,
+  checked at dial time, so an endpoint a user typed cannot reach services
+  inside the network. It never follows a redirect, since every request is
+  signed.
 
 The s3store tests run against an S3 mock in Docker (skipped without Docker),
 and against real AWS S3, R2, and GCS buckets with `OBJECTSTORE_BUCKET_TEST=1`.

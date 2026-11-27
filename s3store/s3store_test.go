@@ -59,6 +59,8 @@ func TestS3Compatible(t *testing.T) {
 		AccessKeyID:     "test",
 		SecretAccessKey: "test",
 		PathStyle:       true,
+		// The test server listens on this host.
+		PrivateAddressesAllowed: true,
 	})
 	if err != nil {
 		t.Fatal(err)
