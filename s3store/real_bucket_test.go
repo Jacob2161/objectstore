@@ -2,7 +2,7 @@ package s3store
 
 import (
 	"context"
-	"encoding/json"
+	json "encoding/json/v2"
 	"os"
 	"strings"
 	"testing"
