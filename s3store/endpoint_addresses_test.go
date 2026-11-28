@@ -2,8 +2,10 @@ package s3store
 
 import (
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -164,5 +166,50 @@ func TestRedirectsAreRefused(t *testing.T) {
 	}
 	if got := redirected.Load(); got != 0 {
 		t.Fatalf("the redirect target received %d requests, want 0", got)
+	}
+}
+
+// TestProxyOnPrivateAddressIsReached checks that a proxy on a private or
+// loopback address can be dialed whatever the policy, while the same address
+// as a bucket endpoint is denied.
+func TestProxyOnPrivateAddressIsReached(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			connection.Close()
+		}
+	}()
+	proxies := &proxyAddresses{}
+	dial := addressPolicy{}.dialer(proxies)
+	_, err = dial(t.Context(), "tcp", listener.Addr().String())
+	if !errors.Is(err, ErrPrivateEndpoint) {
+		t.Fatalf("dialing a loopback endpoint by default = %v, want ErrPrivateEndpoint", err)
+	}
+	proxyURL, err := url.Parse("http://" + listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxies.add(proxyURL)
+	connection, err := dial(t.Context(), "tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dialing a recorded loopback proxy = %v, want a connection", err)
+	}
+	connection.Close()
+}
+
+// TestUnresolvedProxiedHostIsDenied checks that a bucket host this machine
+// cannot resolve is denied before a proxy is asked to reach it.
+func TestUnresolvedProxiedHostIsDenied(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://bucket.invalid/object", nil)
+	if err := (addressPolicy{}).checkProxiedHost(req); err == nil {
+		t.Fatal("an unresolvable host through a proxy was allowed")
 	}
 }

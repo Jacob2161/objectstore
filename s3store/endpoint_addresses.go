@@ -1,13 +1,16 @@
 package s3store
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
+	"sync"
 	"syscall"
+	"time"
 
 	// Aliased: net/http shares the package name.
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
@@ -82,8 +85,9 @@ func (p addressPolicy) checkProxiedHost(req *http.Request) error {
 	}
 	resolved, err := net.DefaultResolver.LookupNetIP(req.Context(), "ip", hostname)
 	if err != nil {
-		// The proxy resolves the name; a failure here is not a refusal.
-		return nil
+		// A name that does not resolve here cannot be checked, so it is
+		// denied rather than left to whatever the proxy resolves it to.
+		return fmt.Errorf("resolve %s to check its address: %w", hostname, err)
 	}
 	for _, ip := range resolved {
 		if err := p.check(ip); err != nil {
@@ -93,24 +97,82 @@ func (p addressPolicy) checkProxiedHost(req *http.Request) error {
 	return nil
 }
 
-// refuseRedirect makes every redirect the final response, which the SDK
+// denyRedirect makes every redirect the final response, which the SDK
 // reports as an error. Every bucket request carries a signature, and a
 // redirect would resend it, and the request body, wherever the endpoint
 // points.
-func refuseRedirect(*http.Request, []*http.Request) error {
+func denyRedirect(*http.Request, []*http.Request) error {
 	return http.ErrUseLastResponse
 }
 
+// dialTimeout and dialKeepAlive are the SDK's own dialer settings.
+const (
+	dialTimeout   = 30 * time.Second
+	dialKeepAlive = 30 * time.Second
+)
+
+// proxyAddresses are the host:port addresses of the proxies requests were
+// sent through. A connection to one is the proxy's, not the bucket's, so
+// the address policy does not apply to it; checkProxiedHost checks the
+// bucket the proxy carries the request to instead.
+type proxyAddresses struct {
+	addresses sync.Map
+}
+
+// add records a proxy's address as the transport dials it.
+func (p *proxyAddresses) add(proxyURL *url.URL) {
+	p.addresses.Store(proxyDialAddress(proxyURL), true)
+}
+
+// has reports whether address is a recorded proxy's.
+func (p *proxyAddresses) has(address string) bool {
+	_, found := p.addresses.Load(address)
+	return found
+}
+
+// proxyDialAddress is the host:port the transport dials for a proxy, with
+// the scheme's default port when the URL names none.
+func proxyDialAddress(proxyURL *url.URL) string {
+	port := proxyURL.Port()
+	if port == "" {
+		switch proxyURL.Scheme {
+		case "https":
+			port = "443"
+		case "socks5", "socks5h":
+			port = "1080"
+		default:
+			port = "80"
+		}
+	}
+	return net.JoinHostPort(proxyURL.Hostname(), port)
+}
+
+// dialer connects to a recorded proxy as it is, and to any other address
+// only through the policy's control.
+func (p addressPolicy) dialer(proxies *proxyAddresses) func(
+	ctx context.Context,
+	network string,
+	address string,
+) (net.Conn, error) {
+	direct := &net.Dialer{Timeout: dialTimeout, KeepAlive: dialKeepAlive, Control: p.control}
+	toProxy := &net.Dialer{Timeout: dialTimeout, KeepAlive: dialKeepAlive}
+	return func(ctx context.Context, network string, address string) (net.Conn, error) {
+		if proxies.has(address) {
+			return toProxy.DialContext(ctx, network, address)
+		}
+		return direct.DialContext(ctx, network, address)
+	}
+}
+
 // newHTTPClient is the HTTP client of every bucket: the SDK's default
-// transport, with the policy's control on its dialer and checkProxiedHost
-// before a proxy, and no redirects. It is a plain http.Client because the
+// transport, dialing through the policy (except to a proxy) and checking
+// the bucket's host before a proxy, and no redirects. It is a plain http.Client because the
 // SDK's own client follows 307 and 308 redirects and cannot be told not to.
 func newHTTPClient(policy addressPolicy) *http.Client {
+	proxies := &proxyAddresses{}
 	transport := awshttp.NewBuildableClient().
-		WithDialerOptions(func(dialer *net.Dialer) {
-			dialer.Control = policy.control
-		}).
 		WithTransportOptions(func(transport *http.Transport) {
+			transport.DialContext = policy.dialer(proxies)
 			proxy := transport.Proxy
 			if proxy == nil {
 				return
@@ -123,9 +185,10 @@ func newHTTPClient(policy addressPolicy) *http.Client {
 				if err := policy.checkProxiedHost(req); err != nil {
 					return nil, err
 				}
+				proxies.add(proxyURL)
 				return proxyURL, nil
 			}
 		}).
 		GetTransport()
-	return &http.Client{Transport: transport, CheckRedirect: refuseRedirect}
+	return &http.Client{Transport: transport, CheckRedirect: denyRedirect}
 }
