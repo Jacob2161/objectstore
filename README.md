@@ -56,4 +56,4 @@ if errors.Is(err, objectstore.ErrPrecondition) {
 The s3store tests run against an S3 mock in Docker (skipped without Docker),
 and against real AWS S3, R2, and GCS buckets with `OBJECTSTORE_BUCKET_TEST=1`.
 
-Tested on the two newest Go releases. Licensed under the MIT license.
+Requires Go 1.27. Licensed under the MIT license.
